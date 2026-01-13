@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>English Word Program</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app">
+
+    <header class="header">
+      <div>
+        <div class="unit" id="programLabel">Program 7</div>
+        <div class="title" id="screenTitle">ホーム</div>
+        <div class="sub" id="programProgress">達成率：0%</div>
+      </div>
+      <div class="counter" id="counter">-</div>
+    </header>
+
+    <!-- HOME -->
+    <section class="card" id="homeView">
+      <div class="homeTop">
+        <div class="homeTitle">Program 7</div>
+        <div class="homeSub">Partを選んで学習を開始します。</div>
+      </div>
+
+      <div class="homeGrid" id="partCards"></div>
+
+      <!-- Data Import (teacher only) : 残っていても app.js 側で常に hidden -->
+      <div class="importWrap hidden" id="importWrap">
+        <div class="importTitle">先生用：データ貼り付け（TSV / CSV）</div>
+        <div class="importHelp">
+          1行＝1文。列は「Part / English / Japanese / (任意)Chunks」。
+          Chunks列が空なら自動分割します。
+        </div>
+
+        <textarea id="datasetInput" class="textarea" rows="10"
+placeholder="（現在は未使用：Googleシートから自動読み込み）"></textarea>
+
+        <div class="row">
+          <button class="btn" id="importBtn">インポート</button>
+          <button class="btn" id="exportBtn">エクスポート</button>
+          <button class="btn danger" id="resetDatasetBtn">データを初期化</button>
+        </div>
+
+        <p class="status" id="importStatus">未操作</p>
+      </div>
+
+      <div class="homeNote">
+        ※進捗はこの端末のブラウザに保存されます（localStorage）。
+      </div>
+    </section>
+
+    <!-- Admin PIN Modal : 残っていても app.js 側で常に hidden -->
+    <div class="modal hidden" id="adminModal" aria-hidden="true">
+      <div class="modalCard">
+        <div class="modalTitle">先生用メニュー</div>
+        <div class="modalSub">（現在は未使用）</div>
+
+        <input id="adminPin" class="pinInput" inputmode="numeric" placeholder="PIN" />
+        <div class="row">
+          <button class="btn primary" id="adminUnlockBtn">開く</button>
+          <button class="btn" id="adminCancelBtn">キャンセル</button>
+        </div>
+        <p class="status" id="adminStatus">（現在は未使用）</p>
+      </div>
+    </div>
+
+    <!-- STUDY -->
+    <section class="card hidden" id="studyView">
+      <div class="textNavWrap" id="textNavWrap">
+        <div class="textNavTitle">
+          本文（クリックで文へ）
+          <button class="ghost small" id="backHomeBtn">← ホーム</button>
+        </div>
+        <div class="textParagraph" id="textParagraph"></div>
+      </div>
+
+      <p class="sentence" id="sentence"></p>
+
+      <div class="meta-row">
+        <button id="toggleTranslation" class="ghost">訳を見る</button>
+        <span id="masteredBadge" class="badge" aria-hidden="true">Mastered</span>
+      </div>
+
+      <div id="translation" class="translation"></div>
+    </section>
+
+    <!-- Tabs -->
+    <nav class="tabs hidden" id="tabs">
+      <button class="tab active" data-tab="structure">① 文のしくみ</button>
+      <button class="tab" data-tab="reading">② 音声</button>
+      <button class="tab" data-tab="quiz">③ チェック</button>
+      <button class="tab" data-tab="summary">④ まとめ</button>
+    </nav>
+
+    <!-- Panels -->
+    <section class="card hidden" id="panels">
+      <div class="panel active" id="structure">
+        <p class="chunkline" id="chunks"></p>
+        <div class="hint" id="chunkMeaning">まとまりをクリックすると意味（日本語）が出ます</div>
+      </div>
+
+      <div class="panel" id="reading">
+        <div class="row">
+          <button id="playEnglishBtn" class="btn primary">▶︎ 英文を聞く</button>
+          <div class="seg" role="group" aria-label="speed">
+            <button id="speedNormal" class="segbtn active" type="button">ふつう</button>
+            <button id="speedSlow" class="segbtn" type="button">ゆっくり</button>
+          </div>
+          <button id="stopEnglishBtn" class="btn">■ 停止</button>
+        </div>
+        <p id="ttsStatus" class="status">音声：待機中</p>
+      </div>
+
+      <div class="panel" id="quiz">
+        <p class="q-title">単語を並べて文を作ろう</p>
+        <div class="quiz-translation" id="quizTranslation"></div>
+
+        <div id="pool" class="chips"></div>
+        <div id="answer" class="answer"></div>
+
+        <div class="row">
+          <button id="checkBtn" class="btn">答え合わせ</button>
+          <button id="resetQuizBtn" class="btn">やり直し</button>
+        </div>
+
+        <div id="feedback" class="feedback"></div>
+      </div>
+
+      <div class="panel" id="summary">
+        <div class="summary-top">
+          <div class="summary-title" id="summaryTitle">まとめ</div>
+          <div class="summary-sub" id="summaryStats">読み込み中…</div>
+        </div>
+
+        <div class="row">
+          <button class="btn" id="filterAllBtn">すべて</button>
+          <button class="btn" id="filterWrongBtn">まちがえた文だけ</button>
+          <button class="btn" id="filterNotMasteredBtn">未Masteredだけ</button>
+        </div>
+
+        <div class="row">
+          <button class="btn danger" id="resetProgressBtn">進捗をリセット</button>
+        </div>
+
+        <div class="summary-list" id="summaryList"></div>
+
+        <div class="summary-note">
+          ヒント：一覧の「この文へ」で、その文にジャンプできます。
+        </div>
+      </div>
+    </section>
+
+    <footer class="bottom hidden" id="bottomNav">
+      <button class="nav" id="prevBtn">← 前へ</button>
+      <button class="nav next" id="nextBtn">次へ →</button>
+    </footer>
+
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
