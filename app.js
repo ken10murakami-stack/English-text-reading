@@ -13,6 +13,9 @@ const GOOGLE_SHEET = {
 const PROGRESS_KEY = `ewp_progress_${PROGRAM_INFO.id}`;
 const MASTER_STREAK = 3;
 
+// クールダウン（再挑戦インターバル）
+const QUIZ_COOLDOWN_MS = 60 * 1000; // 1分
+
 // ===============================
 // DOM
 // ===============================
@@ -94,8 +97,13 @@ const state = {
   currentTab: "structure",
 
   // ✅ クイズ「そのPart内で一周するまで再出題しない」用
-  quizDoneByPart: {},      // { [partId]: [sentenceId,...] }
-  quizAttemptLocked: false // クイズ開始〜答え合わせまで他操作ロック
+  quizDoneByPart: {},       // { [partId]: [sentenceId,...] }
+
+  // ✅ クイズ中（1文の答え合わせまで）他タブロック
+  quizAttemptLocked: false,
+
+  // ✅ 再挑戦インターバル
+  quizCooldownById: {}      // { [sentenceId]: unlockAtMs }
 };
 
 // ===============================
@@ -122,6 +130,8 @@ function loadProgress(){
 
   state.quizDoneByPart = (d.quizDoneByPart && typeof d.quizDoneByPart === "object") ? d.quizDoneByPart : {};
   state.quizAttemptLocked = !!d.quizAttemptLocked;
+
+  state.quizCooldownById = (d.quizCooldownById && typeof d.quizCooldownById === "object") ? d.quizCooldownById : {};
 }
 
 function saveProgress(){
@@ -136,7 +146,8 @@ function saveProgress(){
     currentTab: state.currentTab,
 
     quizDoneByPart: state.quizDoneByPart,
-    quizAttemptLocked: state.quizAttemptLocked
+    quizAttemptLocked: state.quizAttemptLocked,
+    quizCooldownById: state.quizCooldownById
   }));
 }
 
@@ -480,6 +491,23 @@ function getWrong(id){ return Number.isInteger(state.wrongCountById[id]) ? state
 function shuffle(arr){ return [...arr].sort(()=>Math.random()-0.5); }
 
 // ===============================
+// Cooldown helpers
+// ===============================
+function setCooldown(it){
+  state.quizCooldownById[it.id] = Date.now() + QUIZ_COOLDOWN_MS;
+  saveProgress();
+}
+function isOnCooldown(it){
+  const until = state.quizCooldownById[it.id];
+  return typeof until === "number" && Date.now() < until;
+}
+function cooldownRemainSec(it){
+  const until = state.quizCooldownById[it.id];
+  if(typeof until !== "number") return 0;
+  return Math.max(0, Math.ceil((until - Date.now()) / 1000));
+}
+
+// ===============================
 // Part progress reset
 // ===============================
 function resetPartProgress(part){
@@ -487,8 +515,9 @@ function resetPartProgress(part){
     delete state.streakById[it.id];
     delete state.wrongCountById[it.id];
     state.masteredIds.delete(it.id);
+    delete state.quizCooldownById[it.id];
   });
-  // このPartの「周回済み」も消す
+
   if(state.quizDoneByPart && state.quizDoneByPart[part.partId]){
     delete state.quizDoneByPart[part.partId];
   }
@@ -531,18 +560,18 @@ function resetRound(){
   setDoneListForCurrentPart([]);
 }
 
-// 次に未チェックの文へ移動（なければnull）
+// 次に未チェック＆クールダウン無しの文へ移動（なければnull）
 function jumpToNextUndone(){
   const part = getCurrentPart();
   if(!part) return null;
 
-  const list = getDoneListForCurrentPart();
-  const done = new Set(list);
+  const done = new Set(getDoneListForCurrentPart());
 
   for(let k=1; k<=part.items.length; k++){
     const idx = (state.index + k) % part.items.length;
     const it = part.items[idx];
-    if(!done.has(it.id)){
+
+    if(!done.has(it.id) && !isOnCooldown(it)){
       state.index = idx;
       return it;
     }
@@ -550,7 +579,33 @@ function jumpToNextUndone(){
   return null;
 }
 
-// ===== クイズ中の操作ロック =====
+// クイズで「出題可能」が1つでもあるか
+function hasAnyQuizAvailable(){
+  const part = getCurrentPart();
+  if(!part) return false;
+  const done = new Set(getDoneListForCurrentPart());
+
+  return part.items.some(it => !done.has(it.id) && !isOnCooldown(it));
+}
+
+// クイズ全滅（全部クールダウン等）のときの残り最短秒
+function minRemainingCooldownSec(){
+  const part = getCurrentPart();
+  if(!part) return 0;
+
+  let minMs = Infinity;
+  const now = Date.now();
+  part.items.forEach(it=>{
+    const until = state.quizCooldownById[it.id];
+    if(typeof until === "number" && until > now){
+      minMs = Math.min(minMs, until - now);
+    }
+  });
+  if(minMs === Infinity) return 0;
+  return Math.max(1, Math.ceil(minMs / 1000));
+}
+
+// ===== クイズ中の操作ロック（1文の答え合わせまで） =====
 function setQuizAttemptLocked(locked){
   state.quizAttemptLocked = locked;
 
@@ -562,13 +617,11 @@ function setQuizAttemptLocked(locked){
     btn.classList.toggle("disabled", disable);
   });
 
-  // 本文クリック/移動系を無効化
+  // 本文クリックを無効化
   if(textParagraphEl) textParagraphEl.style.pointerEvents = locked ? "none" : "auto";
-  if(backHomeBtn) backHomeBtn.disabled = locked;
 
-  // prev/next は renderSentence で毎回上書きされるので、ここでは「見た目＋保険」程度に
-  if(prevBtn) prevBtn.classList.toggle("disabledLike", locked);
-  if(nextBtn) nextBtn.classList.toggle("disabledLike", locked);
+  // ホーム戻りも無効化
+  if(backHomeBtn) backHomeBtn.disabled = locked;
 
   saveProgress();
 }
@@ -589,7 +642,6 @@ function showHome(){
   screenTitleEl.textContent = "ホーム";
   counterEl.textContent = "-";
 
-  // クイズロック解除
   setQuizAttemptLocked(false);
 
   updateHeaderProgressHome();
@@ -624,9 +676,6 @@ function showStudy(partId){
 function partMasteredCount(part){
   return part.items.reduce((acc, it) => acc + (state.masteredIds.has(it.id) ? 1 : 0), 0);
 }
-function partWrongTotal(part){
-  return part.items.reduce((acc, it) => acc + getWrong(it.id), 0);
-}
 
 function updateHeaderProgressStudy(){
   const part = getCurrentPart();
@@ -651,8 +700,7 @@ function updateHeaderProgressHome(){
 
 // ===============================
 // Home rendering
-// - まちがえ合計は表示しない
-// - 進捗リセットボタンのみ（カード内）
+// - 進捗リセットボタンのみ
 // ===============================
 function renderHome(){
   partCardsEl.innerHTML = "";
@@ -680,14 +728,12 @@ function renderHome(){
       </div>
     `;
 
-    // カードクリック → 学習開始
     card.addEventListener("click", () => {
       state.index = 0;
       state.currentTab = "structure";
       showStudy(part.partId);
     });
 
-    // リセットボタン（カードクリックの伝播を止める）
     card.querySelector(".partResetBtn").addEventListener("click", (e)=>{
       e.stopPropagation();
       const ok = confirm(`${part.partLabel} の進捗をリセットしますか？`);
@@ -763,6 +809,32 @@ function applyQuizView(tabKey){
 }
 
 function openTab(key){
+  // ロック中は quiz 以外へ行けない（念のため）
+  if(state.quizAttemptLocked && key !== "quiz"){
+    feedback.textContent = "答え合わせが終わるまで、他のタブは使えません。";
+    feedback.classList.add("show");
+    return;
+  }
+
+  // ★ここが「全てクールダウン中はクイズ開始させない」本体
+  if(key === "quiz"){
+    // 1) 周回が終わっていたら周回リセット（ただしクールダウンは残す）
+    if(isRoundComplete()){
+      resetRound();
+    }
+
+    // 2) 出題可能がないなら、クイズへ入らせない
+    if(!hasAnyQuizAvailable()){
+      const sec = minRemainingCooldownSec();
+      // quizに入れない：構造タブに留める
+      feedback.textContent = sec > 0
+        ? `いまはチェック問題がありません（全てクールダウン中）。最短で ${sec}秒 後に再開できます。`
+        : `いまはチェック問題がありません。`;
+      feedback.classList.add("show");
+      return;
+    }
+  }
+
   state.currentTab = key;
 
   document.querySelectorAll(".tab").forEach(t=>t.classList.remove("active"));
@@ -775,20 +847,21 @@ function openTab(key){
   if(key === "summary") renderSummary();
 
   if(key === "quiz"){
-    // もしこの文が今周回でチェック済みなら、未チェック文へ自動で飛ぶ
+    // もし現在の文が（チェック済み or クールダウン中）なら、出題可能へ飛ぶ
     const it = getItem();
-    if(it && isDoneThisRound(it)){
+    if(it && (isDoneThisRound(it) || isOnCooldown(it))){
       const moved = jumpToNextUndone();
-      if(!moved){
-        resetRound();
+      if(moved){
+        // indexが変わった
       }
-      renderSentence();
     }
 
-    // クイズ開始 → 答え合わせまで他タブ等ロック
+    // クイズ開始 → 1文の答え合わせまでロック
     setQuizAttemptLocked(true);
+
+    // クイズ側の表示を整えるため描画
+    renderSentence();
   }else{
-    // quiz以外へ移動できる状況ならロック解除
     setQuizAttemptLocked(false);
   }
 
@@ -810,7 +883,7 @@ function renderSentence(){
   sentenceEl.textContent = it.text;
   translationEl.textContent = it.translation;
   translationEl.classList.remove("show");
-  toggleTranslationBtn.textContent = "訳を見る";
+  toggleTranslationBtn.textContent = "自分で訳したら訳を確認";
 
   quizTranslationEl.textContent = `日本語訳：${it.translation}`;
 
@@ -832,7 +905,7 @@ function renderSentence(){
   feedback.textContent = "";
   renderQuiz(it.reorderTokens);
 
-  // prev/next（クイズロック中は押せない）
+  // prev/next（ロック中は押せない）
   prevBtn.disabled = state.quizAttemptLocked || state.index === 0;
   nextBtn.disabled = state.quizAttemptLocked || state.index === part.items.length - 1;
 
@@ -840,11 +913,6 @@ function renderSentence(){
 
   renderTextParagraph();
   applyQuizView(state.currentTab);
-
-  // クイズタブ表示中はロック継続（整合）
-  if(state.currentTab === "quiz"){
-    setQuizAttemptLocked(true);
-  }
 
   saveProgress();
 }
@@ -856,21 +924,10 @@ function renderQuiz(tokens){
     const c = document.createElement("span");
     c.className = "chip";
     c.textContent = t;
-    c.addEventListener("click", ()=>{
-      if(state.quizAttemptLocked === false && state.currentTab !== "quiz"){
-        return;
-      }
-      answer.appendChild(c);
-    });
+    c.addEventListener("click", ()=>answer.appendChild(c));
     pool.appendChild(c);
   });
-
-  answer.onclick = (e)=>{
-    if(state.quizAttemptLocked === false && state.currentTab !== "quiz"){
-      return;
-    }
-    if(e.target.classList.contains("chip")) pool.appendChild(e.target);
-  };
+  answer.onclick = (e)=>{ if(e.target.classList.contains("chip")) pool.appendChild(e.target); };
 }
 
 // ===============================
@@ -883,7 +940,7 @@ function renderSummary(){
   summaryTitleEl.textContent = `${part.partLabel} まとめ`;
 
   const mastered = partMasteredCount(part);
-  const wrongTotal = partWrongTotal(part);
+  const wrongTotal = part.items.reduce((acc, it) => acc + getWrong(it.id), 0);
   summaryStatsEl.textContent = `Mastered ${mastered}/${part.items.length}｜まちがえ合計 ${wrongTotal}回`;
 
   let list = [...part.items];
@@ -1002,10 +1059,13 @@ toggleTranslationBtn.addEventListener("click", ()=>{
     return;
   }
   translationEl.classList.toggle("show");
-  toggleTranslationBtn.textContent = translationEl.classList.contains("show") ? "訳を隠す" : "訳を見る";
+  toggleTranslationBtn.textContent =
+    translationEl.classList.contains("show")
+      ? "訳を隠す（もう一度自分で）"
+      : "自分で訳したら訳を確認";
 });
 
-// ✅ 答え合わせ：正誤に関係なく「今周回でチェック済み」にし、次の未チェックへ
+// ✅ 答え合わせ：今周回でチェック済みにし、クールダウン付与
 checkBtn.addEventListener("click", ()=>{
   const it = getItem();
   const part = getCurrentPart();
@@ -1030,29 +1090,19 @@ checkBtn.addEventListener("click", ()=>{
   masteredBadgeEl.classList.toggle("show", isMastered(it.id));
   updateHeaderProgressStudy();
 
-  // ✅ この文は「今周回でチェック済み」
+  // ✅ 今周回でチェック済み（正誤に関係なく）
   markDoneThisRound(it);
 
-  // ✅ 答え合わせしたらロック解除
+  // ✅ 再挑戦は1分後（クールダウン）
+  setCooldown(it);
+
+  // ✅ 答え合わせしたらロック解除（ここが要件）
   setQuizAttemptLocked(false);
 
   saveProgress();
 
-  // ✅ 次の未チェック文へ自動で進む（残っている場合）
-  if(!isRoundComplete()){
-    const moved = jumpToNextUndone();
-    if(moved){
-      renderSentence();
-      openTab("quiz"); // 次の文でも「答え合わせまでロック」開始
-      return;
-    }
-  }
-
-  // ✅ 一周完了：周回をリセットして案内
-  if(isRoundComplete()){
-    resetRound();
-    alert("このPartのチェックを一周しました。もう一周できます。");
-  }
+  // 次の文へは自動遷移しない（＝「ロックはこの1問の答え合わせまで」）
+  // 必要なら次の文へ進むのは「次へ」ボタンで。
 });
 
 resetQuizBtn.addEventListener("click", ()=>{
@@ -1062,7 +1112,6 @@ resetQuizBtn.addEventListener("click", ()=>{
   renderQuiz(it.reorderTokens);
 });
 
-// prev/next はクイズロック中は不可（renderSentenceでもdisabledにする）
 prevBtn.addEventListener("click", ()=>{
   if(state.quizAttemptLocked) return;
   const part=getCurrentPart(); if(!part) return;
@@ -1106,20 +1155,16 @@ resetProgressBtn.addEventListener("click", ()=>{
   state.currentTab="structure";
   state.quizDoneByPart = {};
   state.quizAttemptLocked = false;
+  state.quizCooldownById = {};
 
   stopTTS();
   showHome();
 });
 
-// ✅ タブ：クイズ挑戦中は quiz以外に行けない
+// ✅ タブ：ロック中は quiz以外に行けない
 document.querySelectorAll(".tab").forEach(tab=>{
   tab.addEventListener("click", ()=>{
     const target = tab.dataset.tab;
-    if(state.quizAttemptLocked && target !== "quiz"){
-      feedback.textContent = "答え合わせが終わるまで、他のタブは使えません。";
-      feedback.classList.add("show");
-      return;
-    }
     openTab(target);
   });
 });
