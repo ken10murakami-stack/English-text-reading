@@ -136,6 +136,7 @@ function sheetCsvUrl(){
   return `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET.sheetId}/gviz/tq?tqx=out:csv&sheet=${encodeURIComponent(GOOGLE_SHEET.sheetName)}`;
 }
 
+// 最低限のCSV1行パーサ（ダブルクォート対応）
 function parseCSVLine(line) {
   const result = [];
   let current = "";
@@ -165,10 +166,10 @@ async function loadDatasetFromGoogleSheet(){
   const lines = csvText.split(/\r?\n/).map(l=>l.trim()).filter(Boolean);
   if(lines.length <= 1) return "";
 
-  // 1行目はヘッダー想定
+  // 1行目はヘッダー想定（読み飛ばす）
   const dataLines = lines.slice(1);
 
-  // TSV化（既存の buildProgramFromText を活かす）
+  // TSV化（buildProgramFromText を流用するため）
   const tsv = dataLines.map(line=>{
     const cols = parseCSVLine(line);
     const part = (cols[0] || "").trim();
@@ -184,6 +185,8 @@ async function loadDatasetFromGoogleSheet(){
 
 // ===============================
 // Parsing dataset
+// columns: Part / English / Japanese / (optional) Chunks
+// Chunks: chunkText::meaning | chunkText::meaning ...
 // ===============================
 function splitLine(line){
   if(line.includes("\t")) return line.split("\t");
@@ -208,7 +211,7 @@ function normalizeSentenceId(partNo, idx){
 }
 
 // ===============================
-// Auto chunking
+// Auto chunking (簡易)
 // ===============================
 const WH = new Set(["what","where","when","who","why","how"]);
 const AUX = new Set(["do","does","did","can","could","will","would","shall","should","may","might","must","is","am","are","was","were","have","has","had"]);
@@ -260,6 +263,7 @@ function autoChunksFromEnglish(english){
 
   const chunks = [];
 
+  // WH疑問詞（how to 特例）
   if(tokens.length && WH.has(tokens[0].toLowerCase())){
     const ht = consumeHowTo(tokens);
     if(ht){
@@ -271,11 +275,13 @@ function autoChunksFromEnglish(english){
     }
   }
 
+  // AUX
   if(tokens.length && AUX.has(tokens[0].toLowerCase())){
     chunks.push({ text: tokens[0], type:"m", meaning:"" });
     tokens = tokens.slice(1);
   }
 
+  // 主語
   const vIdx = findVerbIndex(tokens);
   const subj = tokens.slice(0, Math.max(0, vIdx));
   tokens = tokens.slice(Math.max(0, vIdx));
@@ -283,9 +289,11 @@ function autoChunksFromEnglish(english){
     chunks.push({ text: detokenize(subj), type:"s", meaning:"" });
   }
 
+  // 動詞（ざっくり）
   if(tokens.length){
     let verbTokens = [];
     const first = tokens[0].toLowerCase();
+
     if(["don't","doesn't","didn't","cannot","can't","won't","wouldn't","shouldn't","isn't","aren't","wasn't","weren't","haven't","hasn't","hadn't"].includes(first)){
       verbTokens.push(tokens[0]);
       tokens = tokens.slice(1);
@@ -293,7 +301,7 @@ function autoChunksFromEnglish(english){
         verbTokens.push(tokens[0]);
         tokens = tokens.slice(1);
       }
-    }else{
+    } else {
       verbTokens.push(tokens[0]);
       tokens = tokens.slice(1);
 
@@ -309,9 +317,11 @@ function autoChunksFromEnglish(english){
         }
       }
     }
+
     chunks.push({ text: detokenize(verbTokens), type:"v", meaning:"" });
   }
 
+  // 残り（まとめ方を軽く工夫）
   const out = [];
   let buf = [];
   const flushBuf = ()=>{ if(buf.length){ out.push(detokenize(buf)); buf=[]; } };
@@ -320,6 +330,7 @@ function autoChunksFromEnglish(english){
     const w = tokens[i];
     const wl = w.toLowerCase();
 
+    // the best
     if(wl === "the" && tokens[i+1] && tokens[i+1].toLowerCase() === "best"){
       flushBuf();
       out.push("the best");
@@ -327,6 +338,7 @@ function autoChunksFromEnglish(english){
       continue;
     }
 
+    // than 〜（次の前置詞/接続まで）
     if(wl === "than"){
       flushBuf();
       let j = i+1;
@@ -340,6 +352,7 @@ function autoChunksFromEnglish(english){
       continue;
     }
 
+    // to + verb ...
     if(wl === "to" && tokens[i+1] && looksLikeVerb(tokens[i+1])){
       flushBuf();
       let j = i+2;
@@ -353,6 +366,7 @@ function autoChunksFromEnglish(english){
       continue;
     }
 
+    // 前置詞で区切りやすく
     if(PREP.has(wl)){
       flushBuf();
       buf.push(w);
@@ -362,6 +376,7 @@ function autoChunksFromEnglish(english){
     buf.push(w);
   }
   flushBuf();
+
   out.forEach(t => chunks.push({ text:t, type:"m", meaning:"" }));
 
   if(endPunct && chunks.length){
@@ -454,6 +469,18 @@ function getWrong(id){ return Number.isInteger(state.wrongCountById[id]) ? state
 function shuffle(arr){ return [...arr].sort(()=>Math.random()-0.5); }
 
 // ===============================
+// Part progress reset
+// ===============================
+function resetPartProgress(part){
+  part.items.forEach(it=>{
+    delete state.streakById[it.id];
+    delete state.wrongCountById[it.id];
+    state.masteredIds.delete(it.id);
+  });
+  saveProgress();
+}
+
+// ===============================
 // View switching
 // ===============================
 function showHome(){
@@ -528,9 +555,12 @@ function updateHeaderProgressHome(){
 
 // ===============================
 // Home rendering
+// - まちがえ合計は表示しない
+// - 進捗リセットボタンのみ追加（カード内）
 // ===============================
 function renderHome(){
   partCardsEl.innerHTML = "";
+
   PROGRAM.parts.forEach(part => {
     const mastered = partMasteredCount(part);
     const total = part.items.length || 1;
@@ -538,20 +568,40 @@ function renderHome(){
 
     const card = document.createElement("div");
     card.className = "partCard";
+
     card.innerHTML = `
       <div class="partTop">
         <div class="partName">${part.partLabel}</div>
         <div class="partMeta">${mastered}/${part.items.length} Mastered</div>
       </div>
-      <div class="partBar"><div style="width:${pct}%"></div></div>
-      <div class="partMeta">まちがえ合計：${partWrongTotal(part)}回</div>
-      <div class="partMeta">文数：${part.items.length}</div>
+
+      <div class="partBar">
+        <div style="width:${pct}%"></div>
+      </div>
+
+      <div class="partActions">
+        <button class="partResetBtn" type="button">このPartの進捗をリセット</button>
+      </div>
     `;
+
+    // カードクリック → 学習開始
     card.addEventListener("click", () => {
       state.index = 0;
       state.currentTab = "structure";
       showStudy(part.partId);
     });
+
+    // リセットボタン（カードクリックの伝播を止める）
+    card.querySelector(".partResetBtn").addEventListener("click", (e)=>{
+      e.stopPropagation();
+      const ok = confirm(`${part.partLabel} の進捗をリセットしますか？`);
+      if(!ok) return;
+
+      resetPartProgress(part);
+      updateHeaderProgressHome();
+      renderHome();
+    });
+
     partCardsEl.appendChild(card);
   });
 }
@@ -898,7 +948,7 @@ backHomeBtn.addEventListener("click", ()=>showHome());
 // Boot (Google Sheet → PROGRAM)
 // ===============================
 async function boot(){
-  // 表示ラベルを上書き（Program 3表記を消す）
+  // 表示ラベルを上書き
   programLabelEl.textContent = PROGRAM_INFO.label;
 
   // 先生UIは常に隠す
@@ -920,7 +970,7 @@ async function boot(){
     }
   }catch(e){
     console.error(e);
-    alert("教材データを読み込めませんでした。\n公開設定・シート名（Program7）・列名を確認してください。");
+    alert("教材データを読み込めませんでした。\n公開設定・シート名（Program7）・列を確認してください。");
     PROGRAM = { programId: PROGRAM_INFO.id, programLabel: PROGRAM_INFO.label, parts: [] };
     showHome();
     return;
