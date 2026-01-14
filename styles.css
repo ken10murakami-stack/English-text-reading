@@ -130,10 +130,7 @@ body{
   cursor: pointer;
   font-size: 12px;
 }
-
-.partResetBtn:hover{
-  background: rgba(0,0,0,.06);
-}
+.partResetBtn:hover{ background: rgba(0,0,0,.06); }
 
 .textNavWrap{
   background: rgba(0,0,0,.02);
@@ -226,6 +223,10 @@ body{
 .tab.active{
   background: rgba(43,108,255,.14);
   border-color: rgba(43,108,255,.30);
+}
+.tab.disabled{
+  opacity: .45;
+  cursor: not-allowed;
 }
 
 .panel{ display:none; }
@@ -328,6 +329,7 @@ body{
   font-weight: 800;
 }
 .ghost.small{ padding: 6px 10px; font-size: 12px; }
+.ghost:disabled{ opacity: .55; cursor:not-allowed; }
 
 .status{ font-size: 12px; color: var(--muted); margin: 10px 0 0 0; }
 
