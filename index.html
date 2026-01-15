@@ -27,45 +27,16 @@
 
       <div class="homeGrid" id="partCards"></div>
 
-      <!-- Data Import (teacher only) : app.js 側で常に hidden -->
-      <div class="importWrap hidden" id="importWrap">
-        <div class="importTitle">先生用：データ貼り付け（TSV / CSV）</div>
-        <div class="importHelp">
-          1行＝1文。列は「Part / English / Japanese / (任意)Chunks」。
-          Chunks列が空なら自動分割します。
-        </div>
-
-        <textarea id="datasetInput" class="textarea" rows="10"
-placeholder="（現在は未使用：Googleシートから自動読み込み）"></textarea>
-
-        <div class="row">
-          <button class="btn" id="importBtn">インポート</button>
-          <button class="btn" id="exportBtn">エクスポート</button>
-          <button class="btn danger" id="resetDatasetBtn">データを初期化</button>
-        </div>
-
-        <p class="status" id="importStatus">未操作</p>
-      </div>
+      <!-- teacher only (常にhidden運用) -->
+      <div class="importWrap hidden" id="importWrap"></div>
 
       <div class="homeNote">
-        ※進捗はこの端末のブラウザに保存されます（localStorage）。
+        ※進捗とデータはこの端末のブラウザに保存されます（localStorage）。
       </div>
     </section>
 
-    <!-- Admin PIN Modal : app.js 側で常に hidden -->
-    <div class="modal hidden" id="adminModal" aria-hidden="true">
-      <div class="modalCard">
-        <div class="modalTitle">先生用メニュー</div>
-        <div class="modalSub">（現在は未使用）</div>
-
-        <input id="adminPin" class="pinInput" inputmode="numeric" placeholder="PIN" />
-        <div class="row">
-          <button class="btn primary" id="adminUnlockBtn">開く</button>
-          <button class="btn" id="adminCancelBtn">キャンセル</button>
-        </div>
-        <p class="status" id="adminStatus">（現在は未使用）</p>
-      </div>
-    </div>
+    <!-- Admin PIN Modal（残っていてもOK / 常にhidden運用） -->
+    <div class="modal hidden" id="adminModal" aria-hidden="true"></div>
 
     <!-- STUDY -->
     <section class="card hidden" id="studyView">
@@ -80,7 +51,7 @@ placeholder="（現在は未使用：Googleシートから自動読み込み）"
       <p class="sentence" id="sentence"></p>
 
       <div class="meta-row">
-        <button id="toggleTranslation" class="ghost">訳を見る</button>
+        <button id="toggleTranslation" class="ghost">自分で訳したら訳を確認</button>
         <span id="masteredBadge" class="badge" aria-hidden="true">Mastered</span>
       </div>
 
@@ -90,27 +61,25 @@ placeholder="（現在は未使用：Googleシートから自動読み込み）"
     <!-- Tabs -->
     <nav class="tabs hidden" id="tabs">
       <button class="tab active" data-tab="structure">① 文のしくみ</button>
-      <button class="tab" data-tab="reading">② 音声</button>
-      <button class="tab" data-tab="quiz">③ チェック</button>
-      <button class="tab" data-tab="summary">④ まとめ</button>
+      <button class="tab" data-tab="quiz">② チェック</button>
+      <button class="tab" data-tab="summary">③ まとめ</button>
     </nav>
 
     <!-- Panels -->
     <section class="card hidden" id="panels">
       <div class="panel active" id="structure">
         <p class="chunkline" id="chunks"></p>
-        <div class="hint" id="chunkMeaning">まとまりをクリックすると意味（日本語）が出ます</div>
-      </div>
 
-      <div class="panel" id="reading">
-        <div class="row">
-          <button id="playEnglishBtn" class="btn primary">▶︎ 英文を聞く</button>
+        <!-- ここに速度/停止を入れる -->
+        <div class="row" style="margin-top:10px;">
           <div class="seg" role="group" aria-label="speed">
             <button id="speedNormal" class="segbtn active" type="button">ふつう</button>
             <button id="speedSlow" class="segbtn" type="button">ゆっくり</button>
           </div>
           <button id="stopEnglishBtn" class="btn">■ 停止</button>
         </div>
+
+        <div class="hint" id="chunkMeaning">まとまりをクリックすると意味（日本語）と音声が出ます</div>
         <p id="ttsStatus" class="status">音声：待機中</p>
       </div>
 
